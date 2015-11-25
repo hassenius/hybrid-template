@@ -1,0 +1,15 @@
+parameters:
+  key_name: hk_key
+  instance_type: m1.small
+  network_name: internal
+  external_network: external
+  wp_image_id: ubuntu-14.04
+  db_image_id: ubuntu-14.04
+  db_name: wordpress
+  db_username: admin
+  db_password: SomethingSecret
+  db_root_password: SomethingSecret
+
+resource_registry:
+  My::Own::DBSoftware: templates/dbserver-install.yaml
+  My::Own::WebSoftware: templates/webserver-install.yaml

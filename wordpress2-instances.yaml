@@ -1,0 +1,167 @@
+heat_template_version: 2014-10-16
+
+description: >
+  An example of a Heat template specifying a two tiered web application.
+  The master template describes the overall topology. 
+  Nested templates and resource registry are used to customize the spesific deployment
+  in individual environments
+
+parameters:
+  key_name:
+    type: string
+    description : Name of a KeyPair to enable SSH access to the instance
+  instance_type:
+    type: string
+    description: Instance type for web and DB servers
+    default: Standard_1_2
+  network_name:
+    type: string
+    description: Name or id of the network to provision to
+  external_network:
+    type: string
+    description: Name or id of the network to get Floating IP from
+  wp_image_id:
+    type: string
+    description: Name or ID of the image to use for Web Server. Tested with Ubuntu 14.04
+  db_image_id:
+    type: string
+    description: Name or ID of the image to use for DB Server. Tested with Ubuntu 14.04
+  db_name:
+    type: string
+    description: WordPress database name
+    default: wordpress
+    constraints:
+      - length: { min: 1, max: 64 }
+        description: db_name must be between 1 and 64 characters
+      - allowed_pattern: '[a-zA-Z][a-zA-Z0-9]*'
+        description: >
+          db_name must begin with a letter and contain only alphanumeric
+          characters
+  db_username:
+    type: string
+    description: The WordPress database admin account username
+    default: admin
+    hidden: true
+    constraints:
+      - length: { min: 1, max: 16 }
+        description: db_username must be between 1 and 16 characters
+      - allowed_pattern: '[a-zA-Z][a-zA-Z0-9]*'
+        description: >
+          db_username must begin with a letter and contain only alphanumeric
+          characters
+  db_password:
+    type: string
+    description: The WordPress database admin account password
+    default: admin
+    hidden: true
+    constraints:
+      - length: { min: 1, max: 41 }
+        description: db_password must be between 1 and 41 characters
+      - allowed_pattern: '[a-zA-Z0-9]*'
+        description: db_password must contain only alphanumeric characters
+  db_root_password:
+    type: string
+    description: Root password for MySQL
+    default: admin
+    hidden: true
+    constraints:
+      - length: { min: 1, max: 41 }
+        description: db_root_password must be between 1 and 41 characters
+      - allowed_pattern: '[a-zA-Z0-9]*'
+        description: db_root_password must contain only alphanumeric characters
+
+resources:
+## Database Server Resources
+  DatabaseServer:
+    type: OS::Nova::Server
+    properties:
+      image: { get_param: db_image_id }
+      flavor: { get_param: instance_type }
+      key_name: { get_param: key_name }
+      networks:
+        - network: { get_param: network_name }
+      security_groups: [{ get_resource: secgroup-dbserver }]
+      user_data_format: RAW
+      user_data: { get_attr: [ db_software_init, config ] }
+        
+  db_software_init:
+    type: My::Own::DBSoftware
+    properties:
+      db_root_password: { get_param: db_root_password }
+      db_name: { get_param: db_name }
+      db_username: { get_param: db_username }
+      db_password: { get_param: db_password }
+
+  secgroup-dbserver:
+    type: OS::Neutron::SecurityGroup
+    properties: 
+      description: Security Group for Database Server
+      rules:
+        - protocol: tcp
+          port_range_max: 22
+          port_range_min: 22
+          remote_ip_prefix: 0.0.0.0/0
+        - protocol: tcp
+          port_range_max: 3306
+          port_range_min: 3306
+          remote_mode: remote_group_id
+          remote_group_id: { get_resource: secgroup-webserver }
+    
+
+## WebServer Resources
+  WebServer:
+    type: OS::Nova::Server
+    properties:
+      image: { get_param: wp_image_id }
+      flavor: { get_param: instance_type }
+      key_name: { get_param: key_name }
+      networks:
+        - port: { get_resource: web_server_private_ip }
+      user_data_format: RAW
+      user_data: { get_attr: [ web_software_init, config ] }
+
+  web_software_init:
+    type: My::Own::WebSoftware
+    properties:
+      db_root_password: { get_param: db_root_password }
+      db_name: { get_param: db_name }
+      db_username: { get_param: db_username }
+      db_password: { get_param: db_password }
+      db_ipaddr: { get_attr: [DatabaseServer, addresses, { get_param: network_name }, 0, addr] } 
+      
+  secgroup-webserver:
+    type: OS::Neutron::SecurityGroup
+    properties:
+      description: Security Group for WebServer.
+      rules: 
+        - protocol: tcp
+          port_range_max: 22
+          port_range_min: 22
+          remote_ip_prefix: 0.0.0.0/0
+        - protocol: tcp
+          port_range_max: 80
+          port_range_min: 80
+          remote_ip_prefix: 0.0.0.0/0
+
+  web_server_private_ip:
+    type: OS::Neutron::Port
+    properties:
+      network: { get_param: network_name }
+      security_groups: [{ get_resource: secgroup-webserver }]
+
+  web_server_floating_ip:
+    type: OS::Neutron::FloatingIP
+    depends_on:  
+    - web_server_private_ip
+    properties:
+      floating_network: { get_param: external_network }
+      port_id: { get_resource: web_server_private_ip }
+      
+outputs:
+  WebsiteURL:
+    description: URL for Wordpress wiki
+    value:
+      str_replace:
+        template: http://host/wordpress
+        params:
+          host: { get_attr: [ web_server_floating_ip, floating_ip_address ] }

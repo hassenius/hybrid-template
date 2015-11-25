@@ -1,0 +1,29 @@
+heat_template_version: 2014-10-16
+parameters:
+  db_root_password:
+    type: string
+  db_name: 
+    type: string
+  db_username: 
+    type: string
+  db_password: 
+    type: string
+
+resources:
+  software-init:
+    type: OS::Heat::MultipartMime
+    properties:
+      parts:
+        - config: { get_resource: DBInstall }
+      
+  DBInstall:
+    type: OS::Heat::CloudConfig
+    properties:
+      cloud_config:
+        merge_how: 'dict(recurse_array,no_replace)+list(append)'
+        packages:
+          - mariadb-server
+          
+outputs:
+  config:
+    value: { get_resource: software-init }

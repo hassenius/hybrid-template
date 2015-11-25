@@ -1,0 +1,45 @@
+heat_template_version: 2014-10-16
+
+parameters:
+  db_root_password:
+    type: string
+  db_name: 
+    type: string
+  db_username: 
+    type: string
+  db_password: 
+    type: string
+  db_ipaddr: 
+    type: string
+
+resources:
+  software-init:
+    type: OS::Heat::MultipartMime
+    properties:
+      parts:
+        - config: { get_resource: WPInstall }
+        - config: { get_resource: WPSetup }
+        
+  WPInstall:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config: { get_file: ../scripts/wpinstall.sh }
+        
+
+  WPSetup:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config: 
+        str_replace: 
+          template: { get_file: ../scripts/wpsetup.sh }
+          params:
+            db_rootpassword: { get_param: db_root_password }
+            db_name: { get_param: db_name }
+            db_user: { get_param: db_username }
+            db_password: { get_param: db_password }
+            db_ipaddr: { get_param: db_ipaddr } 
+
+outputs:
+  config:
+    value: { get_resource: software-init }
+

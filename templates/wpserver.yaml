@@ -1,0 +1,120 @@
+heat_template_version: 2014-10-16
+
+parameters:
+  image_id:
+    type: string
+  instance_type: 
+    type: string
+  key_name: 
+    type: string
+  network_name: 
+    type: string
+  external_network:
+    type: string
+  db_root_password:
+    type: string
+  db_name: 
+    type: string
+  db_username: 
+    type: string
+  db_password: 
+    type: string
+  db_ipaddr: 
+    type: string
+
+resources:
+  secgroup-ssh:
+    type: OS::Neutron::SecurityGroup
+    properties:
+      description: Enable traffic external traffic on SSH.
+      rules: [{protocol: tcp, port_range_max: 22, port_range_min: 22},]
+
+  secgroup-http-cred:
+    type: OS::Neutron::SecurityGroup
+    properties:
+      description: Enable http connection
+      rules: [{protocol: tcp, port_range_max: 80, port_range_min: 80, remote_ip_prefix: 0.0.0.0/0},]
+
+  web_server_private_ip:
+    type: OS::Neutron::Port
+    properties:
+      network: { get_param: network_name }
+      security_groups: [{ get_resource: secgroup-ssh }, { get_resource: secgroup-http-cred }]
+
+  web_server_floating_ip:
+    type: OS::Neutron::FloatingIP
+    depends_on:  
+    - web_server_private_ip
+    properties:
+      floating_network: { get_param: external_network }
+      port_id: { get_resource: web_server_private_ip }
+  WebServer:
+    type: OS::Nova::Server
+    properties:
+      image: { get_param: image_id }
+      flavor: { get_param: instance_type }
+      key_name: { get_param: key_name }
+      networks:
+        - port: { get_resource: web_server_private_ip }
+      user_data_format: RAW
+      user_data:
+        get_resource: software-init      
+
+  software-init:
+    type: OS::Heat::MultipartMime
+    properties:
+      parts:
+        - config: { get_resource: WPInstall }
+        - config: { get_resource: WPSetup }
+        
+  WPInstall:
+#    type: OS::Heat::CloudConfig
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config: |
+        #!/bin/bash -v
+        apt-get update
+        apt-get install -y apache2 libapache2-mod-php5 php5-mysql
+        apt-get -y install unzip
+        cd /var/www/html
+        wget https://wordpress.org/latest.zip
+        unzip latest.zip
+        service apache2 start
+        
+#    properties:
+#      cloud_config:
+#        merge_how: 'dict(recurse_array,no_replace)+list(append)'
+#        packages:
+#          - wordpress
+
+  WPSetup:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config: 
+        str_replace: 
+          template: { get_file: ../common/wpsetup.sh }
+          params:
+            db_rootpassword: { get_param: db_root_password }
+            db_name: { get_param: db_name }
+            db_user: { get_param: db_username }
+            db_password: { get_param: db_password }
+            db_ipaddr: { get_param: db_ipaddr } 
+
+          
+  #WPSetup:
+    #type: My::Own::WPSetup
+    #depends_on: WPInstall
+    #properties:
+      #db_root_password: { get_param: db_root_password }
+      #db_name: { get_param: db_name }
+      #db_username: { get_param: db_username }
+      #db_password: { get_param: db_password }
+      #db_ipaddr: { get_param: db_ipaddr } 
+      
+outputs:
+  floating_ip_address:
+    description: Floating IP Address of the WebServer Instance
+    value: { get_attr: [web_server_floating_ip, floating_ip_address] }
+  ip_address:
+    description: Private IP Address of the WebServer Instance
+    value: { get_attr: [WebServer, addresses, { get_param: network_name }, 0, addr] } 
